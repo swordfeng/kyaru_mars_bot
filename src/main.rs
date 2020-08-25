@@ -5,6 +5,8 @@ use img_hash::{Hasher, HasherConfig, ImageHash};
 use std::collections::HashMap;
 use std::env;
 use telegram_bot::*;
+use regex::Regex;
+use lazy_static::lazy_static;
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -63,9 +65,75 @@ async fn handle_update(
             } else {
                 img_db.add(message.chat.id(), hash);
             }
+        } else if let MessageKind::Text {
+            ref data,
+            ref entities,
+            ..
+        } = message.kind {
+            for e in entities {
+                let file_url = match e.kind {
+                    MessageEntityKind::Url => extract_image_url(data.get(e.offset as usize..e.length as usize).unwrap()).await,
+                    MessageEntityKind::TextLink(ref url) => extract_image_url(url).await,
+                    _ => None,
+                };
+                if let Some(file_url) = file_url {
+                    let file_content = reqwest::get(&file_url).await?.bytes().await?;
+                    let img = image::load_from_memory(&file_content)?;
+                    let hash = hasher.hash_image(&img);
+                    if img_db.exists(message.chat.id(), &hash) {
+                        api.send(SeenItBefore::reply_to(message.chat.id(), message.id))
+                            .await?;
+                    } else {
+                        img_db.add(message.chat.id(), hash);
+                    }
+                }
+            }
         }
     }
     Ok(())
+}
+
+async fn extract_image_url(url: &str) -> Option<String> {
+    let mut resp = reqwest::get(url).await.ok()?;
+    if !resp.status().is_success() {
+        return None
+    }
+    let content_type = resp.headers()[reqwest::header::CONTENT_TYPE].to_str().ok()?;
+    if content_type.starts_with("image/") {
+        return Some(url.to_owned())
+    }
+    if !content_type.starts_with("text/html") {
+        return None
+    }
+    let mut total_len = 0;
+    let mut data = vec![];
+    data.reserve(65536);
+    while let Some(chunk) = resp.chunk().await.unwrap() {
+        data.append(&mut chunk.to_vec());
+        total_len += chunk.len();
+        if total_len > 65536 {
+            break
+        }
+    }
+    let data = std::str::from_utf8(&data).ok()?;
+    lazy_static! {
+        static ref META_OG: Regex = Regex::new("<meta[^>]* property=\"og:image\"[^>]*>").unwrap();
+        static ref META_TW: Regex = Regex::new("<meta[^>]* property=\"twitter:image\"[^>]*>").unwrap();
+        static ref CONTENT: Regex = Regex::new("content=\"([^\"]*)\"").unwrap();
+    }
+    if let Some(m) = META_OG.find(&data) {
+        let line = data.get(m.start()..m.end()).unwrap();
+        if let Some(c) = CONTENT.captures(line) {
+            return Some(c[1].to_owned())
+        }
+    }
+    if let Some(m) = META_TW.find(&data) {
+        let line = data.get(m.start()..m.end()).unwrap();
+        if let Some(c) = CONTENT.captures(line) {
+            return Some(c[1].to_owned())
+        }
+    }
+    None
 }
 
 struct Distance;
