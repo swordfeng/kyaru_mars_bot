@@ -4,6 +4,8 @@ use futures::StreamExt;
 use img_hash::{Hasher, HasherConfig, ImageHash};
 use std::collections::HashMap;
 use std::env;
+use std::io::{BufReader, Seek, SeekFrom, BufWriter, Write};
+use std::fs::{File, OpenOptions};
 use telegram_bot::*;
 use regex::Regex;
 use lazy_static::lazy_static;
@@ -13,7 +15,7 @@ async fn main() -> Result<()> {
     let token = env::var("TELEGRAM_BOT_TOKEN").expect("TELEGRAM_BOT_TOKEN not set");
     let api = Api::new(&token);
     let hasher = HasherConfig::new().preproc_dct().to_hasher();
-    let mut img_db = ImageDatabase::new();
+    let mut img_db = ImageDatabase::new("images.db")?;
 
     let mut stream = api.stream();
     while let Some(update) = stream.next().await {
@@ -63,7 +65,7 @@ async fn handle_update(
                 api.send(SeenItBefore::reply_to(message.chat.id(), message.id))
                     .await?;
             } else {
-                img_db.add(message.chat.id(), hash);
+                img_db.add(message.chat.id(), hash)?;
             }
         } else if let MessageKind::Text {
             ref data,
@@ -84,7 +86,7 @@ async fn handle_update(
                         api.send(SeenItBefore::reply_to(message.chat.id(), message.id))
                             .await?;
                     } else {
-                        img_db.add(message.chat.id(), hash);
+                        img_db.add(message.chat.id(), hash)?;
                     }
                 }
             }
@@ -146,11 +148,41 @@ impl Metric<ImageHash> for Distance {
 
 struct ImageDatabase {
     m: HashMap<ChatId, BKTree<ImageHash, Distance>>,
+    file: BufWriter<File>,
 }
 
 impl ImageDatabase {
-    fn new() -> ImageDatabase {
-        ImageDatabase { m: HashMap::new() }
+    fn new(path: &str) -> Result<ImageDatabase> {
+        let mut m = HashMap::new();
+        let file = if let Ok(file) = File::open(path) {
+            let mut reader = BufReader::new(file);
+            let mut curpos = 0;
+            loop {
+                match rmp_serde::from_read::<_, (ChatId, String)>(&mut reader) {
+                    Ok((cid, h)) => {
+                        m
+                        .entry(cid)
+                        .or_insert_with(|| BKTree::new(Distance))
+                        .add(ImageHash::from_base64(&h)?);
+                    },
+                    Err(err) => if let rmp_serde::decode::Error::InvalidMarkerRead(ref e) = err {
+                        if e.kind() == std::io::ErrorKind::UnexpectedEof {
+                            break;
+                        }
+                    } else {
+                        Err(err)?;
+                    }
+                }
+                curpos = reader.seek(SeekFrom::Current(0)).unwrap();
+            }
+            let mut file = OpenOptions::new().write(true).open(path)?;
+            file.set_len(curpos)?;
+            file.seek(SeekFrom::End(0))?;
+            file
+        } else {
+            File::create(path)?
+        };
+        Ok(ImageDatabase { m, file: BufWriter::new(file) })
     }
 
     fn exists(&self, cid: ChatId, h: &ImageHash) -> bool {
@@ -162,11 +194,14 @@ impl ImageDatabase {
         false
     }
 
-    fn add(&mut self, cid: ChatId, h: ImageHash) {
+    fn add(&mut self, cid: ChatId, h: ImageHash) -> Result<()> {
+        rmp_serde::encode::write(&mut self.file, &(cid, h.to_base64()))?;
+        self.file.flush()?;
         self.m
             .entry(cid)
             .or_insert_with(|| BKTree::new(Distance))
             .add(h);
+        Ok(())
     }
 }
 
