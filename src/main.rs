@@ -19,8 +19,13 @@ async fn main() -> Result<()> {
 
     let mut stream = api.stream();
     while let Some(update) = stream.next().await {
-        if let Err(e) = handle_update(update?, &api, &token, &hasher, &mut img_db).await {
-            eprintln!("{}", e);
+        match update {
+            Err(e) => eprintln!("{}", e),
+            Ok(update) => {
+                if let Err(e) = handle_update(update, &api, &token, &hasher, &mut img_db).await {
+                    eprintln!("{}", e);
+                }
+            }
         }
     }
     Ok(())
