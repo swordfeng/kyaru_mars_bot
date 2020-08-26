@@ -9,9 +9,11 @@ use std::env;
 use std::fs::{File, OpenOptions};
 use std::io::{BufReader, BufWriter, Seek, SeekFrom, Write};
 use telegram_bot::*;
+use log::{error, info, debug};
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    env_logger::init();
     let token = env::var("TELEGRAM_BOT_TOKEN").expect("TELEGRAM_BOT_TOKEN not set");
     let api = Api::new(&token);
     let hasher = HasherConfig::new().preproc_dct().to_hasher();
@@ -21,10 +23,10 @@ async fn main() -> Result<()> {
     loop {
         if let Some(update) = stream.next().await {
             match update {
-                Err(e) => eprintln!("{}", e),
+                Err(e) => error!("{}", e),
                 Ok(update) => {
                     if let Err(e) = handle_update(update, &api, &token, &hasher, &mut img_db).await {
-                        eprintln!("{}", e);
+                        error!("{}", e);
                     }
                 }
             }
@@ -40,6 +42,7 @@ async fn handle_update(
     img_db: &mut ImageDatabase,
 ) -> Result<()> {
     if let UpdateKind::Message(message) = update.kind {
+        debug!("Message: {:?}", &message);
         if let MessageKind::Photo {
             ref data,
             ref caption,
@@ -109,6 +112,7 @@ async fn handle_update(
 }
 
 async fn extract_image_url(url: &str) -> Option<String> {
+    debug!("Extract: {}", url);
     let mut resp = reqwest::get(url).await.ok()?;
     if !resp.status().is_success() {
         return None;
@@ -117,6 +121,7 @@ async fn extract_image_url(url: &str) -> Option<String> {
         .to_str()
         .ok()?;
     if content_type.starts_with("image/") {
+        debug!("Extracted: {}", url);
         return Some(url.to_owned());
     }
     if !content_type.starts_with("text/html") {
@@ -144,6 +149,7 @@ async fn extract_image_url(url: &str) -> Option<String> {
             .get(m.start()..m.end())
             .and_then(|line| CONTENT.captures(line))
         {
+            debug!("Extracted: {}", &c[1]);
             return Some(c[1].to_owned());
         }
     }
@@ -152,6 +158,7 @@ async fn extract_image_url(url: &str) -> Option<String> {
             .get(m.start()..m.end())
             .and_then(|line| CONTENT.captures(line))
         {
+            debug!("Extracted: {}", &c[1]);
             return Some(c[1].to_owned());
         }
     }
@@ -174,6 +181,7 @@ struct ImageDatabase {
 impl ImageDatabase {
     fn new(path: &str) -> Result<ImageDatabase> {
         let mut m = HashMap::new();
+        let mut count = 0;
         let file = if let Ok(file) = File::open(path) {
             let mut reader = BufReader::new(file);
             let mut curpos = 0;
@@ -183,6 +191,8 @@ impl ImageDatabase {
                         m.entry(cid)
                             .or_insert_with(|| BKTree::new(Distance))
                             .add(ImageHash::from_base64(&h)?);
+                        debug!("Image DB insert {:?}", &h);
+                        count += 1;
                     }
                     Err(err) => {
                         if let rmp_serde::decode::Error::InvalidMarkerRead(ref e) = err {
@@ -203,6 +213,7 @@ impl ImageDatabase {
         } else {
             File::create(path)?
         };
+        info!("Image DB loaded, current size = {}", &count);
         Ok(ImageDatabase {
             m,
             file: BufWriter::new(file),
@@ -219,6 +230,7 @@ impl ImageDatabase {
     }
 
     fn add(&mut self, cid: ChatId, h: ImageHash) -> Result<()> {
+        debug!("Image DB insert {:?}", &h);
         rmp_serde::encode::write(&mut self.file, &(cid, h.to_base64()))?;
         self.file.flush()?;
         self.m
