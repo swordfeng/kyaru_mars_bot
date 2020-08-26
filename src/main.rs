@@ -18,17 +18,18 @@ async fn main() -> Result<()> {
     let mut img_db = ImageDatabase::new("images.db")?;
 
     let mut stream = api.stream();
-    while let Some(update) = stream.next().await {
-        match update {
-            Err(e) => eprintln!("{}", e),
-            Ok(update) => {
-                if let Err(e) = handle_update(update, &api, &token, &hasher, &mut img_db).await {
-                    eprintln!("{}", e);
+    loop {
+        if let Some(update) = stream.next().await {
+            match update {
+                Err(e) => eprintln!("{}", e),
+                Ok(update) => {
+                    if let Err(e) = handle_update(update, &api, &token, &hasher, &mut img_db).await {
+                        eprintln!("{}", e);
+                    }
                 }
             }
         }
     }
-    Ok(())
 }
 
 async fn handle_update(
