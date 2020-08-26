@@ -2,13 +2,13 @@ use anyhow::{anyhow, Result};
 use bk_tree::{BKTree, Metric};
 use futures::StreamExt;
 use img_hash::{Hasher, HasherConfig, ImageHash};
+use lazy_static::lazy_static;
+use regex::Regex;
 use std::collections::HashMap;
 use std::env;
-use std::io::{BufReader, Seek, SeekFrom, BufWriter, Write};
 use std::fs::{File, OpenOptions};
+use std::io::{BufReader, BufWriter, Seek, SeekFrom, Write};
 use telegram_bot::*;
-use regex::Regex;
-use lazy_static::lazy_static;
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -71,10 +71,17 @@ async fn handle_update(
             ref data,
             ref entities,
             ..
-        } = message.kind {
+        } = message.kind
+        {
             for e in entities {
                 let file_url = match e.kind {
-                    MessageEntityKind::Url => extract_image_url(data.get(e.offset as usize..e.length as usize).unwrap()).await,
+                    MessageEntityKind::Url => {
+                        extract_image_url(match data.get(e.offset as usize..e.length as usize) {
+                            Some(url) => url,
+                            None => continue,
+                        })
+                        .await
+                    }
                     MessageEntityKind::TextLink(ref url) => extract_image_url(url).await,
                     _ => None,
                 };
@@ -98,41 +105,48 @@ async fn handle_update(
 async fn extract_image_url(url: &str) -> Option<String> {
     let mut resp = reqwest::get(url).await.ok()?;
     if !resp.status().is_success() {
-        return None
+        return None;
     }
-    let content_type = resp.headers()[reqwest::header::CONTENT_TYPE].to_str().ok()?;
+    let content_type = resp.headers()[reqwest::header::CONTENT_TYPE]
+        .to_str()
+        .ok()?;
     if content_type.starts_with("image/") {
-        return Some(url.to_owned())
+        return Some(url.to_owned());
     }
     if !content_type.starts_with("text/html") {
-        return None
+        return None;
     }
     let mut total_len = 0;
     let mut data = vec![];
     data.reserve(65536);
-    while let Some(chunk) = resp.chunk().await.unwrap() {
+    while let Some(chunk) = resp.chunk().await.ok()? {
         data.append(&mut chunk.to_vec());
         total_len += chunk.len();
         if total_len > 65536 {
-            break
+            break;
         }
     }
     let data = std::str::from_utf8(&data).ok()?;
     lazy_static! {
         static ref META_OG: Regex = Regex::new("<meta[^>]* property=\"og:image\"[^>]*>").unwrap();
-        static ref META_TW: Regex = Regex::new("<meta[^>]* property=\"twitter:image\"[^>]*>").unwrap();
+        static ref META_TW: Regex =
+            Regex::new("<meta[^>]* property=\"twitter:image\"[^>]*>").unwrap();
         static ref CONTENT: Regex = Regex::new("content=\"([^\"]*)\"").unwrap();
     }
     if let Some(m) = META_OG.find(&data) {
-        let line = data.get(m.start()..m.end()).unwrap();
-        if let Some(c) = CONTENT.captures(line) {
-            return Some(c[1].to_owned())
+        if let Some(c) = data
+            .get(m.start()..m.end())
+            .and_then(|line| CONTENT.captures(line))
+        {
+            return Some(c[1].to_owned());
         }
     }
     if let Some(m) = META_TW.find(&data) {
-        let line = data.get(m.start()..m.end()).unwrap();
-        if let Some(c) = CONTENT.captures(line) {
-            return Some(c[1].to_owned())
+        if let Some(c) = data
+            .get(m.start()..m.end())
+            .and_then(|line| CONTENT.captures(line))
+        {
+            return Some(c[1].to_owned());
         }
     }
     None
@@ -160,20 +174,21 @@ impl ImageDatabase {
             loop {
                 match rmp_serde::from_read::<_, (ChatId, String)>(&mut reader) {
                     Ok((cid, h)) => {
-                        m
-                        .entry(cid)
-                        .or_insert_with(|| BKTree::new(Distance))
-                        .add(ImageHash::from_base64(&h)?);
-                    },
-                    Err(err) => if let rmp_serde::decode::Error::InvalidMarkerRead(ref e) = err {
-                        if e.kind() == std::io::ErrorKind::UnexpectedEof {
-                            break;
+                        m.entry(cid)
+                            .or_insert_with(|| BKTree::new(Distance))
+                            .add(ImageHash::from_base64(&h)?);
+                    }
+                    Err(err) => {
+                        if let rmp_serde::decode::Error::InvalidMarkerRead(ref e) = err {
+                            if e.kind() == std::io::ErrorKind::UnexpectedEof {
+                                break;
+                            }
+                        } else {
+                            Err(err)?;
                         }
-                    } else {
-                        Err(err)?;
                     }
                 }
-                curpos = reader.seek(SeekFrom::Current(0)).unwrap();
+                curpos = reader.seek(SeekFrom::Current(0))?;
             }
             let mut file = OpenOptions::new().write(true).open(path)?;
             file.set_len(curpos)?;
@@ -182,7 +197,10 @@ impl ImageDatabase {
         } else {
             File::create(path)?
         };
-        Ok(ImageDatabase { m, file: BufWriter::new(file) })
+        Ok(ImageDatabase {
+            m,
+            file: BufWriter::new(file),
+        })
     }
 
     fn exists(&self, cid: ChatId, h: &ImageHash) -> bool {
