@@ -3,13 +3,13 @@ use bk_tree::{BKTree, Metric};
 use futures::StreamExt;
 use img_hash::{Hasher, HasherConfig, ImageHash};
 use lazy_static::lazy_static;
+use log::{debug, error, info};
 use regex::Regex;
 use std::collections::HashMap;
 use std::env;
 use std::fs::{File, OpenOptions};
 use std::io::{BufReader, BufWriter, Seek, SeekFrom, Write};
 use telegram_bot::*;
-use log::{error, info, debug};
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -25,7 +25,8 @@ async fn main() -> Result<()> {
             match update {
                 Err(e) => error!("{}", e),
                 Ok(update) => {
-                    if let Err(e) = handle_update(update, &api, &token, &hasher, &mut img_db).await {
+                    if let Err(e) = handle_update(update, &api, &token, &hasher, &mut img_db).await
+                    {
                         error!("{}", e);
                     }
                 }
@@ -71,7 +72,7 @@ async fn handle_update(
                 if cap == "!!hash" {
                     api.send(message.text_reply(format!("{:?}", hash.as_bytes())))
                         .await?;
-                    return Ok(())
+                    return Ok(());
                 }
             }
             if img_db.exists(message.chat.id(), &hash) {
@@ -88,6 +89,7 @@ async fn handle_update(
             ..
         } = message.kind
         {
+            let mut replied = false;
             for e in entities {
                 let file_url = match e.kind {
                     MessageEntityKind::Url => {
@@ -108,8 +110,11 @@ async fn handle_update(
                     debug!("Photo hash: {:?}", &hash);
                     if img_db.exists(message.chat.id(), &hash) {
                         debug!("Hash exists");
-                        api.send(SeenItBefore::reply_to(message.chat.id(), message.id))
-                            .await?;
+                        if !replied {
+                            api.send(SeenItBefore::reply_to(message.chat.id(), message.id))
+                                .await?;
+                            replied = true;
+                        }
                     } else {
                         img_db.add(message.chat.id(), hash)?;
                         debug!("Hash added");
