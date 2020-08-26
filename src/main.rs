@@ -54,6 +54,7 @@ async fn handle_update(
                     &data[0],
                     |ps1, ps2| if ps1.height < ps2.height { ps2 } else { ps1 },
                 );
+            debug!("Get photo: {:?}", largest_photo);
             let photo_file_response = api.send(largest_photo.get_file()).await?;
             let file_url = format!(
                 "https://api.telegram.org/file/bot{}/{}",
@@ -65,16 +66,21 @@ async fn handle_update(
             let file_content = reqwest::get(&file_url).await?.bytes().await?;
             let img = image::load_from_memory(&file_content)?;
             let hash = hasher.hash_image(&img);
+            debug!("Photo hash: {:?}", &hash);
             if let Some(cap) = caption {
                 if cap == "!!hash" {
                     api.send(message.text_reply(format!("{:?}", hash.as_bytes())))
                         .await?;
+                    return Ok(())
                 }
-            } else if img_db.exists(message.chat.id(), &hash) {
+            }
+            if img_db.exists(message.chat.id(), &hash) {
+                debug!("Hash exists");
                 api.send(SeenItBefore::reply_to(message.chat.id(), message.id))
                     .await?;
             } else {
                 img_db.add(message.chat.id(), hash)?;
+                debug!("Hash added");
             }
         } else if let MessageKind::Text {
             ref data,
@@ -95,14 +101,18 @@ async fn handle_update(
                     _ => None,
                 };
                 if let Some(file_url) = file_url {
+                    debug!("Get photo url: {:?}", &file_url);
                     let file_content = reqwest::get(&file_url).await?.bytes().await?;
                     let img = image::load_from_memory(&file_content)?;
                     let hash = hasher.hash_image(&img);
+                    debug!("Photo hash: {:?}", &hash);
                     if img_db.exists(message.chat.id(), &hash) {
+                        debug!("Hash exists");
                         api.send(SeenItBefore::reply_to(message.chat.id(), message.id))
                             .await?;
                     } else {
                         img_db.add(message.chat.id(), hash)?;
+                        debug!("Hash added");
                     }
                 }
             }
