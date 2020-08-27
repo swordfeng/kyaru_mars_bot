@@ -15,10 +15,15 @@ use std::io::{BufReader, BufWriter, Seek, SeekFrom, Write};
 use telegram_bot::*;
 
 const MIN_IMAGE_HEIGHT: u32 = 480;
-const MAX_PAGE_SIZE: usize = 65536;
+const MAX_PAGE_SIZE: usize = 1048576;
 const MAX_IMAGE_SIZE: usize = 33554432;
 static TWITTER_CONTEXT: OnceCell<TwitterContext> = OnceCell::new();
-static CLIENT: Lazy<reqwest::Client> = Lazy::new(|| reqwest::Client::new());
+static CLIENT: Lazy<reqwest::Client> = Lazy::new(|| {
+    reqwest::ClientBuilder::new()
+        .user_agent("PostmanRuntime/7.26.3")
+        .build()
+        .unwrap()
+});
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -215,8 +220,9 @@ async fn extract_image_url(url: &str) -> Option<String> {
             .get(m.start()..m.end())
             .and_then(|line| CONTENT.captures(line))
         {
-            debug!("Extracted: {}", &c[1]);
-            return Some(c[1].to_owned());
+            let photo_url = htmlescape::decode_html(&c[1]).ok()?;
+            debug!("Extracted: {}", &photo_url);
+            return Some(photo_url);
         }
     }
     if let Some(m) = META_TW.find(&data) {
@@ -224,8 +230,9 @@ async fn extract_image_url(url: &str) -> Option<String> {
             .get(m.start()..m.end())
             .and_then(|line| CONTENT.captures(line))
         {
-            debug!("Extracted: {}", &c[1]);
-            return Some(c[1].to_owned());
+            let photo_url = htmlescape::decode_html(&c[1]).ok()?;
+            debug!("Extracted: {}", &photo_url);
+            return Some(photo_url);
         }
     }
     None
