@@ -384,7 +384,7 @@ async fn init_twitter_context() -> Result<TwitterContext> {
         Regex::new("src=\"(https://abs\\.twimg\\.com/responsive-web/client-web/main\\.[a-zA-Z0-9_-]+\\.js)\"").unwrap()
     });
     static TWITTER_BEARER: Lazy<Regex> = Lazy::new(|| Regex::new("AAAAAAAA[^\"]+").unwrap());
-    let twitter_page = CLIENT.get("twitter.com").send().await?.text().await?;
+    let twitter_page = CLIENT.get("https://twitter.com").send().await?.text().await?;
     let gt = TWITTER_GT
         .captures(&twitter_page)
         .ok_or(anyhow!("guest_token not found on twitter"))?[1]
@@ -398,5 +398,6 @@ async fn init_twitter_context() -> Result<TwitterContext> {
         .captures(&main_script)
         .ok_or(anyhow!("bearer not found on twitter"))?[0]
         .to_owned();
+    debug!("Twitter bearer = {}, gt = {}", &bearer, &gt);
     Ok(TwitterContext { bearer, gt })
 }
