@@ -192,12 +192,25 @@ async fn extract_image_url(url: &str) -> Option<String> {
     }
     let data = read_max_bytes(&mut resp, MAX_PAGE_SIZE).await.ok()?;
     let data = std::str::from_utf8(&data).ok()?;
-    static META_OG: Lazy<Regex> =
-        Lazy::new(|| Regex::new("<meta[^>]* property=\"og:image\"[^>]*>").unwrap());
+    static META_OG: Lazy<Regex> = Lazy::new(|| {
+        Regex::new("<meta[^>]* property=\"og:image(:secure_url|:url)?\"[^>]*>").unwrap()
+    });
     static META_TW: Lazy<Regex> =
         Lazy::new(|| Regex::new("<meta[^>]* name=\"twitter:image(:src)?\"[^>]*>").unwrap());
+    static META_OG_TYPE: Lazy<Regex> =
+        Lazy::new(|| Regex::new("<meta[^>]* property=\"og:type\"[^>]*>").unwrap());
     static CONTENT: Lazy<Regex> = Lazy::new(|| Regex::new("content=\"([^\"]*)\"").unwrap());
     if let Some(m) = META_OG.find(&data) {
+        if let Some(typem) = META_OG_TYPE.find(&data) {
+            if let Some(c) = data
+                .get(typem.start()..typem.end())
+                .and_then(|line| CONTENT.captures(line))
+            {
+                if &c[1] == "profile" {
+                    return None;
+                }
+            }
+        }
         if let Some(c) = data
             .get(m.start()..m.end())
             .and_then(|line| CONTENT.captures(line))
