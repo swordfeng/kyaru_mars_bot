@@ -380,18 +380,18 @@ struct TwitterContext {
 
 async fn init_twitter_context() -> Result<TwitterContext> {
     static TWITTER_GT: Lazy<Regex> = Lazy::new(|| Regex::new("gt=([0-9]+);").unwrap());
-    static TWITTER_MAIN_SCRIPT: Lazy<Regex> = Lazy::new(|| {
-        Regex::new("src=\"(https://abs\\.twimg\\.com/responsive-web/client-web/main\\.[a-zA-Z0-9_-]+\\.js)\"").unwrap()
-    });
     static TWITTER_BEARER: Lazy<Regex> = Lazy::new(|| Regex::new("AAAAAAAA[^\"]+").unwrap());
     let twitter_page = CLIENT.get("https://twitter.com").send().await?.text().await?;
     let gt = TWITTER_GT
         .captures(&twitter_page)
         .ok_or(anyhow!("guest_token not found on twitter"))?[1]
         .to_owned();
+    static TWITTER_MAIN_SCRIPT: Lazy<Regex> = Lazy::new(|| {
+        Regex::new("https://abs\\.twimg\\.com/responsive-web/client-web(-legacy)?/main\\.[a-zA-Z0-9_-]+\\.js").unwrap()
+    });
     let main_script_src = TWITTER_MAIN_SCRIPT
         .captures(&twitter_page)
-        .ok_or(anyhow!("main.js not found on twitter"))?[1]
+        .ok_or(anyhow!("main.js not found on twitter"))?[0]
         .to_owned();
     let main_script = CLIENT.get(&main_script_src).send().await?.text().await?;
     let bearer = TWITTER_BEARER
