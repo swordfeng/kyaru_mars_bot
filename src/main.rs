@@ -381,7 +381,12 @@ struct TwitterContext {
 async fn init_twitter_context() -> Result<TwitterContext> {
     static TWITTER_GT: Lazy<Regex> = Lazy::new(|| Regex::new("gt=([0-9]+);").unwrap());
     static TWITTER_BEARER: Lazy<Regex> = Lazy::new(|| Regex::new("AAAAAAAA[^\"]+").unwrap());
-    let twitter_page = CLIENT.get("https://twitter.com").send().await?.text().await?;
+    let twitter_page = CLIENT
+        .get("https://twitter.com")
+        .send()
+        .await?
+        .text()
+        .await?;
     let gt = TWITTER_GT
         .captures(&twitter_page)
         .ok_or(anyhow!("guest_token not found on twitter"))?[1]
