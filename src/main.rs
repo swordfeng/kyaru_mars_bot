@@ -3,9 +3,11 @@ use bk_tree::{BKTree, Metric};
 use futures::StreamExt;
 use image::GenericImageView;
 use img_hash::{Hasher, HasherConfig, ImageHash};
-use lazy_static::lazy_static;
 use log::{debug, error, info};
+use once_cell::sync::{Lazy, OnceCell};
 use regex::Regex;
+use serde_json::json;
+use serde_json::value::Value;
 use std::collections::HashMap;
 use std::env;
 use std::fs::{File, OpenOptions};
@@ -13,6 +15,8 @@ use std::io::{BufReader, BufWriter, Seek, SeekFrom, Write};
 use telegram_bot::*;
 
 const MIN_IMAGE_HEIGHT: u32 = 480;
+static TWITTER_CONTEXT: OnceCell<TwitterContext> = OnceCell::new();
+static CLIENT: Lazy<reqwest::Client> = Lazy::new(|| reqwest::Client::new());
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -21,6 +25,13 @@ async fn main() -> Result<()> {
     let api = Api::new(&token);
     let hasher = HasherConfig::new().preproc_dct().to_hasher();
     let mut img_db = ImageDatabase::new("images.db")?;
+
+    match init_twitter_context().await {
+        Ok(c) => TWITTER_CONTEXT
+            .set(c)
+            .map_err(|_| anyhow!("failed to set twitter context once_cell"))?,
+        Err(e) => error!("{}", e),
+    }
 
     let mut stream = api.stream();
     loop {
@@ -67,7 +78,7 @@ async fn handle_update(
                     .file_path
                     .ok_or(anyhow!("Empty file url in Telegram response"))?
             );
-            let file_content = reqwest::get(&file_url).await?.bytes().await?;
+            let file_content = CLIENT.get(&file_url).send().await?.bytes().await?;
             let img = image::load_from_memory(&file_content)?;
             let hash = hasher.hash_image(&img);
             debug!("Photo hash: {:?}", &hash);
@@ -110,7 +121,7 @@ async fn handle_update(
                 };
                 if let Some(file_url) = file_url {
                     debug!("Get photo url: {:?}", &file_url);
-                    let file_content = reqwest::get(&file_url).await?.bytes().await?;
+                    let file_content = CLIENT.get(&file_url).send().await?.bytes().await?;
                     let img = image::load_from_memory(&file_content)?;
                     if img.height() < MIN_IMAGE_HEIGHT {
                         continue;
@@ -137,7 +148,17 @@ async fn handle_update(
 
 async fn extract_image_url(url: &str) -> Option<String> {
     debug!("Extract: {}", url);
-    let mut resp = reqwest::get(url).await.ok()?;
+    static TWEET_URL: Lazy<Regex> =
+        Lazy::new(|| Regex::new("//twitter.com/.*/status/([0-9]+)").unwrap());
+    if let Some(c) = TWEET_URL.captures(url) {
+        if let Some(photo_url) = extract_tweet_image(&c[1]).await {
+            debug!("Extracted from twitter: {}", photo_url);
+            return Some(photo_url);
+        } else {
+            return None;
+        }
+    }
+    let mut resp = CLIENT.get(url).send().await.ok()?;
     if !resp.status().is_success() {
         return None;
     }
@@ -162,12 +183,11 @@ async fn extract_image_url(url: &str) -> Option<String> {
         }
     }
     let data = std::str::from_utf8(&data).ok()?;
-    lazy_static! {
-        static ref META_OG: Regex = Regex::new("<meta[^>]* property=\"og:image\"[^>]*>").unwrap();
-        static ref META_TW: Regex =
-            Regex::new("<meta[^>]* name=\"twitter:image(:src)?\"[^>]*>").unwrap();
-        static ref CONTENT: Regex = Regex::new("content=\"([^\"]*)\"").unwrap();
-    }
+    static META_OG: Lazy<Regex> =
+        Lazy::new(|| Regex::new("<meta[^>]* property=\"og:image\"[^>]*>").unwrap());
+    static META_TW: Lazy<Regex> =
+        Lazy::new(|| Regex::new("<meta[^>]* name=\"twitter:image(:src)?\"[^>]*>").unwrap());
+    static CONTENT: Lazy<Regex> = Lazy::new(|| Regex::new("content=\"([^\"]*)\"").unwrap());
     if let Some(m) = META_OG.find(&data) {
         if let Some(c) = data
             .get(m.start()..m.end())
@@ -184,6 +204,45 @@ async fn extract_image_url(url: &str) -> Option<String> {
         {
             debug!("Extracted: {}", &c[1]);
             return Some(c[1].to_owned());
+        }
+    }
+    None
+}
+
+async fn extract_tweet_image(id: &str) -> Option<String> {
+    if let Some(TwitterContext { ref bearer, ref gt }) = TWITTER_CONTEXT.get() {
+        let resp = CLIENT
+            .get(&format!(
+                "https://api.twitter.com/2/timeline/conversation/{}.json",
+                id
+            ))
+            .query(&[
+                ("include_entities", "true"),
+                ("include_user_entities", "false"),
+                ("count", "1"),
+            ])
+            .header("authorization", format!("Bearer {}", bearer))
+            .header("x-guest-token", gt)
+            .send()
+            .await
+            .ok()?
+            .json::<Value>()
+            .await
+            .ok()?;
+        let tweet = &resp["globalObjects"]["tweets"][id];
+        if let Value::Array(ref media) = tweet["entities"]["media"] {
+            for medium in media {
+                if medium["type"] == json!("photo") {
+                    return Some(medium["media_url_https"].as_str()?.to_owned());
+                }
+            }
+        }
+        if let Value::Array(ref media) = tweet["extended_entities"]["media"] {
+            for medium in media {
+                if medium["type"] == json!("photo") {
+                    return Some(medium["media_url_https"].as_str()?.to_owned());
+                }
+            }
         }
     }
     None
@@ -312,4 +371,32 @@ impl Request for SeenItBefore {
     fn serialize(&self) -> Result<HttpRequest, telegram_bot_raw::requests::_base::Error> {
         Self::Type::serialize(RequestUrl::method("sendSticker"), self)
     }
+}
+
+struct TwitterContext {
+    bearer: String,
+    gt: String,
+}
+
+async fn init_twitter_context() -> Result<TwitterContext> {
+    static TWITTER_GT: Lazy<Regex> = Lazy::new(|| Regex::new("gt=([0-9]+);").unwrap());
+    static TWITTER_MAIN_SCRIPT: Lazy<Regex> = Lazy::new(|| {
+        Regex::new("src=\"(https://abs\\.twimg\\.com/responsive-web/client-web/main\\.[a-zA-Z0-9_-]+\\.js)\"").unwrap()
+    });
+    static TWITTER_BEARER: Lazy<Regex> = Lazy::new(|| Regex::new("AAAAAAAA[^\"]+").unwrap());
+    let twitter_page = CLIENT.get("twitter.com").send().await?.text().await?;
+    let gt = TWITTER_GT
+        .captures(&twitter_page)
+        .ok_or(anyhow!("guest_token not found on twitter"))?[1]
+        .to_owned();
+    let main_script_src = TWITTER_MAIN_SCRIPT
+        .captures(&twitter_page)
+        .ok_or(anyhow!("main.js not found on twitter"))?[1]
+        .to_owned();
+    let main_script = CLIENT.get(&main_script_src).send().await?.text().await?;
+    let bearer = TWITTER_BEARER
+        .captures(&main_script)
+        .ok_or(anyhow!("bearer not found on twitter"))?[0]
+        .to_owned();
+    Ok(TwitterContext { bearer, gt })
 }

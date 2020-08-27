@@ -9,16 +9,17 @@ edition = "2018"
 [dependencies]
 telegram-bot = "0.7"
 futures = "*"
-tokio = { version = "*", features = ["rt-threaded", "macros"]}
-reqwest = "0.10.7"
+tokio = { version = "*", features = ["rt-threaded", "macros"] }
+reqwest = { version = "0.10.8", features = ["json"] }
 anyhow = "1.0"
 image = "0.23.8"
 img_hash = "3.1.0"
 bk-tree = "0.3.0"
 telegram-bot-raw = "*"
 scraper = "0.12.0"
-lazy_static = "*"
 regex = "1.3.9"
 rmp-serde = "*"
 log = "0.4.11"
 env_logger = "0.7.1"
+once_cell = "1.4.1"
+serde_json = "*"
