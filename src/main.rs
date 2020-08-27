@@ -15,6 +15,8 @@ use std::io::{BufReader, BufWriter, Seek, SeekFrom, Write};
 use telegram_bot::*;
 
 const MIN_IMAGE_HEIGHT: u32 = 480;
+const MAX_PAGE_SIZE: usize = 65536;
+const MAX_IMAGE_SIZE: usize = 33554432;
 static TWITTER_CONTEXT: OnceCell<TwitterContext> = OnceCell::new();
 static CLIENT: Lazy<reqwest::Client> = Lazy::new(|| reqwest::Client::new());
 
@@ -121,7 +123,9 @@ async fn handle_update(
                 };
                 if let Some(file_url) = file_url {
                     debug!("Get photo url: {:?}", &file_url);
-                    let file_content = CLIENT.get(&file_url).send().await?.bytes().await?;
+                    let file_content =
+                        read_max_bytes(&mut CLIENT.get(&file_url).send().await?, MAX_IMAGE_SIZE)
+                            .await?;
                     let img = image::load_from_memory(&file_content)?;
                     if img.height() < MIN_IMAGE_HEIGHT {
                         continue;
@@ -144,6 +148,20 @@ async fn handle_update(
         }
     }
     Ok(())
+}
+
+async fn read_max_bytes(resp: &mut reqwest::Response, size_limit: usize) -> Result<Vec<u8>> {
+    let mut total_len = 0;
+    let mut data = vec![];
+    data.reserve(size_limit);
+    while let Some(chunk) = resp.chunk().await? {
+        data.append(&mut chunk.to_vec());
+        total_len += chunk.len();
+        if total_len > size_limit {
+            break;
+        }
+    }
+    Ok(data)
 }
 
 async fn extract_image_url(url: &str) -> Option<String> {
@@ -172,16 +190,7 @@ async fn extract_image_url(url: &str) -> Option<String> {
     if !content_type.starts_with("text/html") {
         return None;
     }
-    let mut total_len = 0;
-    let mut data = vec![];
-    data.reserve(65536);
-    while let Some(chunk) = resp.chunk().await.ok()? {
-        data.append(&mut chunk.to_vec());
-        total_len += chunk.len();
-        if total_len > 65536 {
-            break;
-        }
-    }
+    let data = read_max_bytes(&mut resp, MAX_PAGE_SIZE).await.ok()?;
     let data = std::str::from_utf8(&data).ok()?;
     static META_OG: Lazy<Regex> =
         Lazy::new(|| Regex::new("<meta[^>]* property=\"og:image\"[^>]*>").unwrap());
