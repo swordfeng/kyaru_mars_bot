@@ -156,7 +156,7 @@ async fn extract_image_url(url: &str) -> Option<String> {
     lazy_static! {
         static ref META_OG: Regex = Regex::new("<meta[^>]* property=\"og:image\"[^>]*>").unwrap();
         static ref META_TW: Regex =
-            Regex::new("<meta[^>]* property=\"twitter:image\"[^>]*>").unwrap();
+            Regex::new("<meta[^>]* name=\"twitter:image(:src)?\"[^>]*>").unwrap();
         static ref CONTENT: Regex = Regex::new("content=\"([^\"]*)\"").unwrap();
     }
     if let Some(m) = META_OG.find(&data) {
