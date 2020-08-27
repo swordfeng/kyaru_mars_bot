@@ -1,6 +1,7 @@
 use anyhow::{anyhow, Result};
 use bk_tree::{BKTree, Metric};
 use futures::StreamExt;
+use image::GenericImageView;
 use img_hash::{Hasher, HasherConfig, ImageHash};
 use lazy_static::lazy_static;
 use log::{debug, error, info};
@@ -10,6 +11,8 @@ use std::env;
 use std::fs::{File, OpenOptions};
 use std::io::{BufReader, BufWriter, Seek, SeekFrom, Write};
 use telegram_bot::*;
+
+const MIN_IMAGE_HEIGHT: u32 = 480;
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -75,6 +78,9 @@ async fn handle_update(
                     return Ok(());
                 }
             }
+            if img.height() < MIN_IMAGE_HEIGHT {
+                return Ok(());
+            }
             if img_db.exists(message.chat.id(), &hash) {
                 debug!("Hash exists");
                 api.send(SeenItBefore::reply_to(message.chat.id(), message.id))
@@ -106,6 +112,9 @@ async fn handle_update(
                     debug!("Get photo url: {:?}", &file_url);
                     let file_content = reqwest::get(&file_url).await?.bytes().await?;
                     let img = image::load_from_memory(&file_content)?;
+                    if img.height() < MIN_IMAGE_HEIGHT {
+                        continue;
+                    }
                     let hash = hasher.hash_image(&img);
                     debug!("Photo hash: {:?}", &hash);
                     if img_db.exists(message.chat.id(), &hash) {
