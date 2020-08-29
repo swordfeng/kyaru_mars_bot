@@ -4,7 +4,7 @@ use futures::StreamExt;
 use image::GenericImageView;
 use img_hash::{Hasher, HasherConfig, ImageHash};
 use log::{debug, error, info};
-use once_cell::sync::{Lazy, OnceCell};
+use once_cell::sync::Lazy;
 use regex::Regex;
 use serde_json::json;
 use serde_json::value::Value;
@@ -12,12 +12,14 @@ use std::collections::HashMap;
 use std::env;
 use std::fs::{File, OpenOptions};
 use std::io::{BufReader, BufWriter, Seek, SeekFrom, Write};
+use std::sync::Mutex;
+use std::time::{Duration, Instant};
 use telegram_bot::*;
 
 const MIN_IMAGE_HEIGHT: u32 = 480;
 const MAX_PAGE_SIZE: usize = 1048576;
 const MAX_IMAGE_SIZE: usize = 33554432;
-static TWITTER_CONTEXT: OnceCell<TwitterContext> = OnceCell::new();
+static TWITTER_CONTEXT: Lazy<Mutex<Option<TwitterContext>>> = Lazy::new(|| Mutex::new(None));
 static CLIENT: Lazy<reqwest::Client> = Lazy::new(|| {
     reqwest::ClientBuilder::new()
         .user_agent("PostmanRuntime/7.26.3")
@@ -32,13 +34,6 @@ async fn main() -> Result<()> {
     let api = Api::new(&token);
     let hasher = HasherConfig::new().preproc_dct().to_hasher();
     let mut img_db = ImageDatabase::new("images.db")?;
-
-    match init_twitter_context().await {
-        Ok(c) => TWITTER_CONTEXT
-            .set(c)
-            .map_err(|_| anyhow!("failed to set twitter context once_cell"))?,
-        Err(e) => error!("{}", e),
-    }
 
     let mut stream = api.stream();
     loop {
@@ -117,7 +112,13 @@ async fn handle_update(
             for e in entities {
                 let file_url = match e.kind {
                     MessageEntityKind::Url => {
-                        extract_image_url(&data.chars().skip(e.offset as usize).take(e.length as usize).collect::<String>())
+                        extract_image_url(
+                            &data
+                                .chars()
+                                .skip(e.offset as usize)
+                                .take(e.length as usize)
+                                .collect::<String>(),
+                        )
                         .await
                     }
                     MessageEntityKind::TextLink(ref url) => extract_image_url(url).await,
@@ -237,7 +238,18 @@ async fn extract_image_url(url: &str) -> Option<String> {
 
 async fn extract_tweet_image(id: &str) -> Option<String> {
     debug!("Extract from tweet: {}", id);
-    if let Some(TwitterContext { ref bearer, ref gt }) = TWITTER_CONTEXT.get() {
+    keep_twitter_context().await.map_or_else(
+        |e| {
+            error!("{}", e);
+            None
+        },
+        Some,
+    )?;
+    let twitter_context = TWITTER_CONTEXT.lock().expect("lock poisoned");
+    if let Some(TwitterContext {
+        ref bearer, ref gt, ..
+    }) = *twitter_context
+    {
         let resp = CLIENT
             .get(&format!(
                 "https://api.twitter.com/2/timeline/conversation/{}.json",
@@ -406,6 +418,7 @@ impl Request for SeenItBefore {
 struct TwitterContext {
     bearer: String,
     gt: String,
+    time: Instant,
 }
 
 async fn init_twitter_context() -> Result<TwitterContext> {
@@ -434,5 +447,26 @@ async fn init_twitter_context() -> Result<TwitterContext> {
         .ok_or(anyhow!("bearer not found on twitter"))?[0]
         .to_owned();
     debug!("Twitter bearer = {}, gt = {}", &bearer, &gt);
-    Ok(TwitterContext { bearer, gt })
+    Ok(TwitterContext {
+        bearer,
+        gt,
+        time: Instant::now(),
+    })
+}
+
+async fn keep_twitter_context() -> Result<()> {
+    let mut tc_opt = TWITTER_CONTEXT.lock().expect("lock poisoned");
+    if let Some(ref twitter_context) = *tc_opt {
+        if twitter_context.time.elapsed() < Duration::new(600, 0) {
+            return Ok(());
+        }
+    }
+    *tc_opt = match init_twitter_context().await {
+        Ok(tc) => Some(tc),
+        Err(e) => {
+            error!("{}", e);
+            None
+        }
+    };
+    Ok(())
 }
