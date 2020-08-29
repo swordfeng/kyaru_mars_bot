@@ -117,10 +117,7 @@ async fn handle_update(
             for e in entities {
                 let file_url = match e.kind {
                     MessageEntityKind::Url => {
-                        extract_image_url(match data.get(e.offset as usize..e.length as usize) {
-                            Some(url) => url,
-                            None => continue,
-                        })
+                        extract_image_url(&data.chars().skip(e.offset as usize).take(e.length as usize).collect::<String>())
                         .await
                     }
                     MessageEntityKind::TextLink(ref url) => extract_image_url(url).await,
@@ -239,6 +236,7 @@ async fn extract_image_url(url: &str) -> Option<String> {
 }
 
 async fn extract_tweet_image(id: &str) -> Option<String> {
+    debug!("Extract from tweet: {}", id);
     if let Some(TwitterContext { ref bearer, ref gt }) = TWITTER_CONTEXT.get() {
         let resp = CLIENT
             .get(&format!(
@@ -258,6 +256,7 @@ async fn extract_tweet_image(id: &str) -> Option<String> {
             .json::<Value>()
             .await
             .ok()?;
+        debug!("Tweet data: {}", &resp);
         let tweet = &resp["globalObjects"]["tweets"][id];
         if let Value::Array(ref media) = tweet["entities"]["media"] {
             for medium in media {
@@ -273,6 +272,8 @@ async fn extract_tweet_image(id: &str) -> Option<String> {
                 }
             }
         }
+    } else {
+        debug!("No valid twitter context");
     }
     None
 }
