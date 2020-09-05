@@ -110,20 +110,16 @@ async fn handle_update(
         {
             let mut replied = false;
             for e in entities {
-                let file_url = match e.kind {
-                    MessageEntityKind::Url => {
-                        extract_image_url(
-                            &data
-                                .chars()
-                                .skip(e.offset as usize)
-                                .take(e.length as usize)
-                                .collect::<String>(),
-                        )
-                        .await
-                    }
-                    MessageEntityKind::TextLink(ref url) => extract_image_url(url).await,
-                    _ => None,
+                let link_url = match e.kind {
+                    MessageEntityKind::Url => data
+                        .chars()
+                        .skip(e.offset as usize)
+                        .take(e.length as usize)
+                        .collect::<String>(),
+                    MessageEntityKind::TextLink(ref url) => url.to_owned(),
+                    _ => continue,
                 };
+                let file_url = extract_image_url(&link_url).await;
                 if let Some(file_url) = file_url {
                     debug!("Get photo url: {:?}", &file_url);
                     let file_content =
@@ -147,6 +143,7 @@ async fn handle_update(
                         debug!("Hash added");
                     }
                 }
+                break
             }
         }
     }
