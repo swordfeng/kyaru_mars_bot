@@ -108,7 +108,6 @@ async fn handle_update(
             ..
         } = message.kind
         {
-            let mut replied = false;
             for e in entities {
                 let link_url = match e.kind {
                     MessageEntityKind::Url => data
@@ -133,17 +132,14 @@ async fn handle_update(
                     debug!("Photo hash: {:?}", &hash);
                     if img_db.exists(message.chat.id(), &hash) {
                         debug!("Hash exists");
-                        if !replied {
-                            api.send(SeenItBefore::reply_to(message.chat.id(), message.id))
-                                .await?;
-                            replied = true;
-                        }
+                        api.send(SeenItBefore::reply_to(message.chat.id(), message.id))
+                            .await?;
                     } else {
                         img_db.add(message.chat.id(), hash)?;
                         debug!("Hash added");
                     }
                 }
-                break
+                break;
             }
         }
     }
