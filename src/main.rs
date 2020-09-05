@@ -114,14 +114,14 @@ async fn handle_update(
                 {
                     api.send(SeenItBefore::reply_to(message.chat.id(), message.id))
                         .await?;
+                    match media_group_id {
+                        Some(ref media_group_id) => *last_media_group = media_group_id.to_owned(),
+                        _ => (),
+                    }
                 }
             } else {
                 img_db.add(message.chat.id(), hash)?;
                 debug!("Hash added");
-            }
-            match media_group_id {
-                Some(ref media_group_id) => *last_media_group = media_group_id.to_owned(),
-                _ => (),
             }
         } else if let MessageKind::Text {
             ref data,
