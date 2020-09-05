@@ -34,6 +34,7 @@ async fn main() -> Result<()> {
     let api = Api::new(&token);
     let hasher = HasherConfig::new().preproc_dct().to_hasher();
     let mut img_db = ImageDatabase::new("images.db")?;
+    let mut last_media_group = "".to_owned();
 
     let mut stream = api.stream();
     loop {
@@ -41,7 +42,15 @@ async fn main() -> Result<()> {
             match update {
                 Err(e) => error!("{}", e),
                 Ok(update) => {
-                    if let Err(e) = handle_update(update, &api, &token, &hasher, &mut img_db).await
+                    if let Err(e) = handle_update(
+                        update,
+                        &api,
+                        &token,
+                        &hasher,
+                        &mut img_db,
+                        &mut last_media_group,
+                    )
+                    .await
                     {
                         error!("{}", e);
                     }
@@ -57,12 +66,14 @@ async fn handle_update(
     token: &str,
     hasher: &Hasher,
     img_db: &mut ImageDatabase,
+    last_media_group: &mut String,
 ) -> Result<()> {
     if let UpdateKind::Message(message) = update.kind {
         debug!("Message: {:?}", &message);
         if let MessageKind::Photo {
             ref data,
             ref caption,
+            ref media_group_id,
             ..
         } = message.kind
         {
@@ -96,11 +107,21 @@ async fn handle_update(
             }
             if img_db.exists(message.chat.id(), &hash) {
                 debug!("Hash exists");
-                api.send(SeenItBefore::reply_to(message.chat.id(), message.id))
-                    .await?;
+                if media_group_id
+                    .as_ref()
+                    .map(|id| id != last_media_group)
+                    .unwrap_or(true)
+                {
+                    api.send(SeenItBefore::reply_to(message.chat.id(), message.id))
+                        .await?;
+                }
             } else {
                 img_db.add(message.chat.id(), hash)?;
                 debug!("Hash added");
+            }
+            match media_group_id {
+                Some(ref media_group_id) => *last_media_group = media_group_id.to_owned(),
+                _ => (),
             }
         } else if let MessageKind::Text {
             ref data,
