@@ -726,7 +726,7 @@ dependencies = [
  "scraper",
  "serde_json",
  "telegram-bot",
- "telegram-bot-raw",
+ "telegram-bot-raw 0.7.0",
  "tokio",
 ]
 
@@ -1792,16 +1792,16 @@ dependencies = [
 
 [[package]]
 name = "telegram-bot"
-version = "0.7.0"
+version = "0.8.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "bb29fb11ef40c839c1c6b4e9c2ec4f357f9f674491e9df5a8c94f8cc2005f860"
+checksum = "fc9552e972bcb551705fcad45bd0b86eca12a22379db36cdfa6d053e1a19b2de"
 dependencies = [
  "bytes",
  "futures",
  "hyper",
  "hyper-tls",
  "multipart",
- "telegram-bot-raw",
+ "telegram-bot-raw 0.8.0",
  "tokio",
  "tracing",
  "tracing-futures",
@@ -1812,6 +1812,19 @@ name = "telegram-bot-raw"
 version = "0.7.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "add65834bee405351f092b18a4647cae05d1c40699570054eadc6d4035d9692c"
+dependencies = [
+ "bytes",
+ "serde",
+ "serde-value",
+ "serde_derive",
+ "serde_json",
+]
+
+[[package]]
+name = "telegram-bot-raw"
+version = "0.8.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0e4fc120e2b85d639fc932a4aa7c1b6a5f1189fb86948d7a02037d1d8f1ef559"
 dependencies = [
  "bytes",
  "serde",

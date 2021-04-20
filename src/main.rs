@@ -396,23 +396,23 @@ impl SeenItBefore {
 }
 
 impl ToMultipart for SeenItBefore {
-    fn to_multipart(&self) -> Result<Multipart, telegram_bot_raw::requests::_base::Error> {
+    fn to_multipart(&self) -> Result<Multipart, telegram_bot::types::Error> {
         Ok(vec![
             (
                 "chat_id",
-                telegram_bot_raw::requests::_base::MultipartValue::Text(
+                telegram_bot::MultipartValue::Text(
                     self.chat_id.to_string().into(),
                 ),
             ),
             (
                 "sticker",
-                telegram_bot_raw::requests::_base::MultipartValue::Text(
+                telegram_bot::MultipartValue::Text(
                     "CAACAgUAAxkBAAMyX0Sjn0AB9RHDl1Y62MljVR2F_HkAAgYAAwfDqAvcvSc9SDpa3hsE".into(),
                 ),
             ),
             (
                 "reply_to_message_id",
-                telegram_bot_raw::requests::_base::MultipartValue::Text(
+                telegram_bot::MultipartValue::Text(
                     self.reply_to_message_id.to_string().into(),
                 ),
             ),
@@ -424,7 +424,7 @@ impl Request for SeenItBefore {
     type Type = MultipartRequestType<Self>;
     type Response = JsonIdResponse<Message>;
 
-    fn serialize(&self) -> Result<HttpRequest, telegram_bot_raw::requests::_base::Error> {
+    fn serialize(&self) -> Result<HttpRequest, telegram_bot::types::Error> {
         Self::Type::serialize(RequestUrl::method("sendSticker"), self)
     }
 }
