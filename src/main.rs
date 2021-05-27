@@ -17,6 +17,7 @@ use telegram_bot::*;
 use tokio::sync::mpsc::*;
 use tokio::sync::Mutex;
 use tokio::task::JoinHandle;
+use tokio_compat_02::FutureExt;
 
 const MIN_IMAGE_HEIGHT: u32 = 480;
 const MAX_PAGE_SIZE: usize = 1048576;
@@ -80,7 +81,7 @@ async fn handler(
 ) -> Result<()> {
     let mut stream = api.stream();
     loop {
-        if let Some(update) = stream.next().await {
+        if let Some(update) = stream.next().compat().await {
             match update {
                 Err(e) => error!("{}", e),
                 Ok(update) => {
@@ -120,7 +121,7 @@ async fn responder(api: &Api, mut receiver: Receiver<JoinHandle<UpdateResult>>) 
                     {
                         if !silence {
                             api.send(SeenItBefore::reply_to(message.chat.id(), message.id))
-                                .await?;
+                            .compat().await?;
                         }
                         match media_group_id {
                             Some(ref media_group_id) => {
@@ -136,7 +137,7 @@ async fn responder(api: &Api, mut receiver: Receiver<JoinHandle<UpdateResult>>) 
             }
             UpdateResult::CheckHash(message, hash) => {
                 api.send(message.text_reply(format!("{:?}", hash.as_bytes())))
-                    .await?;
+                .compat().await?;
             }
         }
     }
@@ -158,7 +159,7 @@ async fn extract_message_hash(
                 |ps1, ps2| if ps1.height < ps2.height { ps2 } else { ps1 },
             );
         info!("Get photo: {:?}", largest_photo);
-        let photo_file_response = api.send(largest_photo.get_file()).await?;
+        let photo_file_response = api.send(largest_photo.get_file()).compat().await?;
         let file_url = format!(
             "https://api.telegram.org/file/bot{}/{}",
             &token,

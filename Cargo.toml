@@ -10,6 +10,7 @@ edition = "2018"
 telegram-bot = "0.8"
 futures = "*"
 tokio = { version = "1", features = ["full"] }
+tokio-compat-02 = "0.2"
 reqwest = { version = "0.11.3", features = ["json"] }
 anyhow = "1.0"
 image = "0.23.8"
