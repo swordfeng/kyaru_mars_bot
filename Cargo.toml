@@ -9,8 +9,8 @@ edition = "2018"
 [dependencies]
 telegram-bot = "0.8"
 futures = "*"
-tokio = { version = "*", features = ["rt-threaded", "macros"] }
-reqwest = { version = "0.10.8", features = ["json"] }
+tokio = { version = "1", features = ["full"] }
+reqwest = { version = "0.11.3", features = ["json"] }
 anyhow = "1.0"
 image = "0.23.8"
 img_hash = "3.1.0"
