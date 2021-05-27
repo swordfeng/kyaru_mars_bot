@@ -12,10 +12,10 @@ use std::collections::HashMap;
 use std::env;
 use std::fs::{File, OpenOptions};
 use std::io::{BufReader, BufWriter, Seek, SeekFrom, Write};
-use tokio::sync::Mutex;
 use std::time::{Duration, Instant};
 use telegram_bot::*;
 use tokio::sync::mpsc::*;
+use tokio::sync::Mutex;
 use tokio::task::JoinHandle;
 
 const MIN_IMAGE_HEIGHT: u32 = 480;
@@ -33,24 +33,34 @@ static CLIENT: Lazy<reqwest::Client> = Lazy::new(|| {
 async fn main() -> Result<()> {
     env_logger::init();
 
-    let token = &*Box::leak(env::var("TELEGRAM_BOT_TOKEN").expect("TELEGRAM_BOT_TOKEN not set").into_boxed_str());
+    let token = &*Box::leak(
+        env::var("TELEGRAM_BOT_TOKEN")
+            .expect("TELEGRAM_BOT_TOKEN not set")
+            .into_boxed_str(),
+    );
     let api = &*Box::leak(Box::new(Api::new(&token)));
 
     let (sender, receiver) = channel(16);
     let handler_handle = tokio::spawn(handler(api, token, sender));
     let responder_handle = tokio::spawn(responder(api, receiver));
-    responder_handle.await.unwrap_or_else(|e| {
-        error!("{}", e);
-        Ok(())
-    }).unwrap_or_else(|e| {
-        error!("{}", e);
-    });
-    handler_handle.await.unwrap_or_else(|e| {
-        error!("{}", e);
-        Ok(())
-    }).unwrap_or_else(|e| {
-        error!("{}", e);
-    });
+    responder_handle
+        .await
+        .unwrap_or_else(|e| {
+            error!("{}", e);
+            Ok(())
+        })
+        .unwrap_or_else(|e| {
+            error!("{}", e);
+        });
+    handler_handle
+        .await
+        .unwrap_or_else(|e| {
+            error!("{}", e);
+            Ok(())
+        })
+        .unwrap_or_else(|e| {
+            error!("{}", e);
+        });
     Ok(())
 }
 
@@ -63,7 +73,11 @@ enum UpdateResult {
     CheckHash(Message, ImageHash),
 }
 
-async fn handler(api: &'static Api, token: &'static str, sender: Sender<JoinHandle<UpdateResult>>) -> Result<()> {
+async fn handler(
+    api: &'static Api,
+    token: &'static str,
+    sender: Sender<JoinHandle<UpdateResult>>,
+) -> Result<()> {
     let mut stream = api.stream();
     loop {
         if let Some(update) = stream.next().await {
@@ -84,12 +98,10 @@ async fn handler(api: &'static Api, token: &'static str, sender: Sender<JoinHand
     }
 }
 
-async fn responder(
-    api: &Api,
-    mut receiver: Receiver<JoinHandle<UpdateResult>>,
-) -> Result<()> {
+async fn responder(api: &Api, mut receiver: Receiver<JoinHandle<UpdateResult>>) -> Result<()> {
     let mut img_db = ImageDatabase::new("images.db")?;
     let mut last_media_group = "".to_owned();
+    let silence = env::var("TELEGRAM_BOT_SILENCE").is_ok();
 
     loop {
         let join_handle = receiver
@@ -106,8 +118,10 @@ async fn responder(
                         .map(|id| id != &last_media_group)
                         .unwrap_or(true)
                     {
-                        api.send(SeenItBefore::reply_to(message.chat.id(), message.id))
-                            .await?;
+                        if !silence {
+                            api.send(SeenItBefore::reply_to(message.chat.id(), message.id))
+                                .await?;
+                        }
                         match media_group_id {
                             Some(ref media_group_id) => {
                                 last_media_group = media_group_id.to_owned()
@@ -123,7 +137,6 @@ async fn responder(
             UpdateResult::CheckHash(message, hash) => {
                 api.send(message.text_reply(format!("{:?}", hash.as_bytes())))
                     .await?;
-                return Ok(());
             }
         }
     }
@@ -138,11 +151,7 @@ async fn extract_message_hash(
     api: &Api,
     token: &str,
 ) -> Result<Option<ImageHash>> {
-    if let MessageKind::Photo {
-        ref data,
-        ..
-    } = message.kind
-    {
+    if let MessageKind::Photo { ref data, .. } = message.kind {
         let largest_photo =
             data.iter().fold(
                 &data[0],
@@ -220,11 +229,7 @@ async fn handle_update(update: Update, api: &Api, token: &str) -> Result<UpdateR
                 let media_group_id = media_group_id.clone();
                 return Ok(UpdateResult::FoundHash(message, hash, media_group_id));
             }
-        } else if let MessageKind::Text {
-            ref data,
-            ..
-        } = message.kind
-        {
+        } else if let MessageKind::Text { ref data, .. } = message.kind {
             if data.starts_with("!!hash") {
                 if let Some(hash) = extract_message_hash(&message, api, token).await? {
                     return Ok(UpdateResult::CheckHash(message, hash));
